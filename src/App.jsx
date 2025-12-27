@@ -1,55 +1,76 @@
-import { connectDeepgram, sendAudioChunk } from "./services/deepgram";
-
-useEffect(() => {
-  connectDeepgram(({ text, isFinal }) => {
-    console.log(isFinal ? "FINAL:" : "LIVE:", text);
-  });
-}, []);
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 function App() {
-  let audioContext;
-  let processor;
-  let source;
+  const recorderRef = useRef(null);
+  const [live, setLive] = useState("");
+  const [finalText, setFinalText] = useState("");
+  const [recording, setRecording] = useState(false);
 
-  const startAudioProcessing = async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  useEffect(() => {
+    let unlisten;
 
-    audioContext = new AudioContext({ sampleRate: 16000 });
+    (async () => {
+      unlisten = await listen("deepgram-transcript", (event) => {
+        const { text, is_final } = event.payload;
 
-    source = audioContext.createMediaStreamSource(stream);
+        if (!text) return;
 
-    processor = audioContext.createScriptProcessor(4096, 1, 1);
+        if (is_final) {
+          setFinalText((prev) => prev + " " + text);
+          setLive("");
+        } else {
+          setLive(text);
+        }
+      });
+    })();
 
-    source.connect(processor);
-    processor.connect(audioContext.destination);
-
-    processor.onaudioprocess = (event) => {
-      const inputData = event.inputBuffer.getChannelData(0);
-      const pcm16 = float32ToPCM16(inputData);
-
-      sendAudioChunk(pcm16);
+    return () => {
+      unlisten && unlisten();
     };
+  }, []);
+
+  const start = async () => {
+    setRecording(true);
+    await invoke("start_deepgram");
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const recorder = new MediaRecorder(stream, {
+      mimeType: "audio/webm",
+    });
+
+    recorderRef.current = recorder;
+
+    recorder.ondataavailable = async (e) => {
+      const buf = await e.data.arrayBuffer();
+      await invoke("send_audio", {
+        chunk: Array.from(new Uint8Array(buf)),
+      });
+    };
+
+    recorder.start(250);
   };
 
-  const float32ToPCM16 = (float32Array) => {
-    const buffer = new ArrayBuffer(float32Array.length * 2);
-    const view = new DataView(buffer);
-
-    let offset = 0;
-    for (let i = 0; i < float32Array.length; i++, offset += 2) {
-      let sample = Math.max(-1, Math.min(1, float32Array[i]));
-      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-    }
-
-    return buffer;
+  const stop = async () => {
+    recorderRef.current?.stop();
+    setRecording(false);
+    await invoke("stop_deepgram");
+    setLive("");
   };
 
   return (
-    <div>
-      <h1>Audio Processing Test</h1>
-      <button onClick={startAudioProcessing}>
-        Start Audio Capture
-      </button>
+    <div style={{ padding: 20 }}>
+      <h2>Voice-to-Text Desktop App</h2>
+
+      <button onClick={start} disabled={recording}>Start</button>
+      <button onClick={stop} disabled={!recording}>Stop</button>
+
+      <h4>Live</h4>
+      <p>{live}</p>
+
+      <h4>Final</h4>
+      <p>{finalText}</p>
     </div>
   );
 }
