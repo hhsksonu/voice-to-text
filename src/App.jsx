@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
-import "./App.css";
+import "./app.css";
 
 function App() {
   const recorderRef = useRef(null);
@@ -58,17 +58,32 @@ function App() {
   useEffect(() => {
     let unlistenTranscript;
     let unlistenConnection;
+    let previousFinalTexts = new Set();
 
     (async () => {
       unlistenTranscript = await listen("deepgram-transcript", (event) => {
         const { text, is_final } = event.payload;
-        if (!text) return;
+        if (!text || !text.trim()) return;
 
         if (isRecordingRef.current) {
           if (is_final) {
-            setLiveText((prev) => prev + text + " ");
+            const trimmedText = text.trim();
+
+            // Check if we've already processed this exact final text
+            if (!previousFinalTexts.has(trimmedText)) {
+              setLiveText((prev) => {
+                // Also check if this text is already at the end of previous text
+                const currentText = prev.trim();
+                if (!currentText.endsWith(trimmedText)) {
+                  previousFinalTexts.add(trimmedText);
+                  return prev + trimmedText + " ";
+                }
+                return prev;
+              });
+            }
             setInterimText("");
           } else {
+            // Replace interim text, don't append
             setInterimText(text);
           }
         }
@@ -396,9 +411,7 @@ function App() {
             )}
           </div>
 
-          <div
-            className={`transcript-display ${!finalText ? "empty" : ""}`}
-          >
+          <div className={`transcript-display ${!finalText ? "empty" : ""}`}>
             {finalText || "Finalized transcripts will appear here..."}
           </div>
         </div>
