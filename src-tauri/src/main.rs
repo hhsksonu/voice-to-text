@@ -1,16 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, State};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use futures_util::{SinkExt, StreamExt};
-use serde::{Serialize};
+use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use std::env;
+use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 
 struct DeepgramState {
-    audio_tx: mpsc::Sender<Vec<u8>>,
+    sender: Arc<TokioMutex<Option<mpsc::Sender<Vec<u8>>>>>,
+    connection_active: Arc<TokioMutex<bool>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -19,58 +21,129 @@ struct TranscriptEvent {
     is_final: bool,
 }
 
+#[derive(Serialize, Clone)]
+struct ConnectionEvent {
+    status: String,
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct StartDeepgramParams {
+    language: String,
+}
+
 #[tauri::command]
-async fn start_deepgram(app: tauri::AppHandle) -> Result<(), String> {
-    let key = env::var("DEEPGRAM_API_KEY")
-        .map_err(|_| "Missing DEEPGRAM_API_KEY")?;
+async fn start_deepgram(
+    app: tauri::AppHandle,
+    state: State<'_, DeepgramState>,
+    params: StartDeepgramParams,
+) -> Result<(), String> {
+    let key = env::var("DEEPGRAM_API_KEY").map_err(|_| "Missing DEEPGRAM_API_KEY")?;
 
-    let url = "wss://api.deepgram.com/v1/listen?punctuate=true&interim_results=true";
+    // Map language codes
+    let lang_code = match params.language.as_str() {
+        "English" => "en",
+        "Hindi" => "hi",
+        "Kannada" => "kn",
+        "Spanish" => "es",
+        _ => "en",
+    };
 
-    let mut request = url.into_client_request().unwrap();
-    request.headers_mut().insert(
-        "Authorization",
-        format!("Token {}", key).parse().unwrap(),
+    let url = format!(
+        "wss://api.deepgram.com/v1/listen?punctuate=true&interim_results=true&model=nova-2&language={}",
+        lang_code
     );
 
-    let (ws, _) = connect_async(request)
+    // Connect to WebSocket with custom headers
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    
+    let mut request = url.into_client_request()
+        .map_err(|e| format!("Failed to build request: {}", e))?;
+    
+    request.headers_mut().insert(
+        "Authorization",
+        format!("Token {}", key).parse().unwrap()
+    );
+
+    // Connect to WebSocket
+    let (ws_stream, _) = connect_async(request)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            let _ = app.emit("connection-status", ConnectionEvent {
+                status: "error".to_string(),
+                message: format!("Connection failed: {}", e),
+            });
+            format!("WebSocket connection failed: {}", e)
+        })?;
 
-    let (mut write, mut read) = ws.split();
+    let (mut write, mut read) = ws_stream.split();
 
-    // Channel for audio chunks
-    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(32);
-    app.manage(DeepgramState { audio_tx: tx });
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
+    *state.sender.lock().await = Some(tx);
+    *state.connection_active.lock().await = true;
 
-    // Writer task: send audio chunks to Deepgram
+    // Emit connection success
+    let _ = app.emit("connection-status", ConnectionEvent {
+        status: "connected".to_string(),
+        message: "Connected to Deepgram".to_string(),
+    });
+
+    // 🔊 Audio sender task
+    let connection_active = state.connection_active.clone();
+    let app_handle_sender = app.clone();
     tauri::async_runtime::spawn(async move {
         while let Some(chunk) = rx.recv().await {
             if write.send(Message::Binary(chunk)).await.is_err() {
+                let _ = app_handle_sender.emit("connection-status", ConnectionEvent {
+                    status: "error".to_string(),
+                    message: "Connection lost. Please try again.".to_string(),
+                });
+                *connection_active.lock().await = false;
                 break;
             }
         }
     });
 
-    // Reader task: receive transcripts from Deepgram
+    // 🧠 Transcript receiver task
     let app_handle = app.clone();
+    let connection_active = state.connection_active.clone();
     tauri::async_runtime::spawn(async move {
-        while let Some(msg) = read.next().await {
-            if let Ok(Message::Text(txt)) = msg {
-                if let Ok(json) = serde_json::from_str::<Value>(&txt) {
-                    if let Some(alt) = json["channel"]["alternatives"].get(0) {
-                        let text = alt["transcript"].as_str().unwrap_or("").to_string();
+        while let Some(message) = read.next().await {
+            match message {
+                Ok(Message::Text(msg)) => {
+                    if let Ok(json) = serde_json::from_str::<Value>(&msg) {
+                        let text = json["channel"]["alternatives"][0]["transcript"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string();
+
                         let is_final = json["is_final"].as_bool().unwrap_or(false);
 
                         if !text.is_empty() {
-                            app_handle
-                                .emit(
-                                    "deepgram-transcript",
-                                    TranscriptEvent { text, is_final },
-                                )
-                                .ok();
+                            let _ = app_handle.emit(
+                                "deepgram-transcript",
+                                TranscriptEvent { text, is_final },
+                            );
                         }
                     }
                 }
+                Ok(Message::Close(_)) => {
+                    let _ = app_handle.emit("connection-status", ConnectionEvent {
+                        status: "disconnected".to_string(),
+                        message: "Connection closed".to_string(),
+                    });
+                    *connection_active.lock().await = false;
+                    break;
+                }
+                Err(e) => {
+                    let _ = app_handle.emit("connection-status", ConnectionEvent {
+                        status: "error".to_string(),
+                        message: format!("Error: {}", e),
+                    });
+                    *connection_active.lock().await = false;
+                    break;
+                }
+                _ => {}
             }
         }
     });
@@ -79,18 +152,43 @@ async fn start_deepgram(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn send_audio(chunk: Vec<u8>, app: tauri::AppHandle) {
-    let _ = app.state::<DeepgramState>().audio_tx.send(chunk).await;
+async fn send_audio(state: State<'_, DeepgramState>, chunk: Vec<u8>) -> Result<(), String> {
+    let sender = state.sender.lock().await;
+    if let Some(tx) = sender.as_ref() {
+        tx.send(chunk).await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_deepgram(state: State<'_, DeepgramState>) -> Result<(), String> {
+    *state.sender.lock().await = None;
+    *state.connection_active.lock().await = false;
+    Ok(())
+}
+
+#[tauri::command]
+async fn check_connection(state: State<'_, DeepgramState>) -> Result<bool, String> {
+    Ok(*state.connection_active.lock().await)
 }
 
 fn main() {
+    // Load .env file (looks in src-tauri directory and parent directories)
     dotenvy::dotenv().ok();
-
+    
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .manage(DeepgramState {
+            sender: Arc::new(TokioMutex::new(None)),
+            connection_active: Arc::new(TokioMutex::new(false)),
+        })
         .invoke_handler(tauri::generate_handler![
             start_deepgram,
-            send_audio
+            send_audio,
+            stop_deepgram,
+            check_connection
         ])
         .run(tauri::generate_context!())
-        .expect("error running tauri app");
+        .expect("error while running tauri app");
 }
