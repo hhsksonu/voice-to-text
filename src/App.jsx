@@ -4,9 +4,9 @@ import { listen } from "@tauri-apps/api/event";
 
 function App() {
   const recorderRef = useRef(null);
+  const lastFinalRef = useRef(""); 
   const [live, setLive] = useState("");
   const [finalText, setFinalText] = useState("");
-  const [recording, setRecording] = useState(false);
 
   useEffect(() => {
     let unlisten;
@@ -14,11 +14,17 @@ function App() {
     (async () => {
       unlisten = await listen("deepgram-transcript", (event) => {
         const { text, is_final } = event.payload;
-
-        if (!text) return;
+        if (!text?.trim()) return;
 
         if (is_final) {
-          setFinalText((prev) => prev + " " + text);
+          // Append ONLY new text (delta)
+          const newPart = text.replace(lastFinalRef.current, "").trim();
+
+          if (newPart) {
+            setFinalText((prev) => prev + " " + newPart);
+          }
+
+          lastFinalRef.current = text;
           setLive("");
         } else {
           setLive(text);
@@ -32,14 +38,14 @@ function App() {
   }, []);
 
   const start = async () => {
-    setRecording(true);
+    lastFinalRef.current = "";
+    setFinalText("");
+    setLive("");
+
     await invoke("start_deepgram");
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const recorder = new MediaRecorder(stream, {
-      mimeType: "audio/webm",
-    });
-
+    const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
     recorderRef.current = recorder;
 
     recorder.ondataavailable = async (e) => {
@@ -54,17 +60,16 @@ function App() {
 
   const stop = async () => {
     recorderRef.current?.stop();
-    setRecording(false);
-    await invoke("stop_deepgram");
     setLive("");
+    await invoke("stop_deepgram"); // backend CloseStream
   };
 
   return (
     <div style={{ padding: 20 }}>
       <h2>Voice-to-Text Desktop App</h2>
 
-      <button onClick={start} disabled={recording}>Start</button>
-      <button onClick={stop} disabled={!recording}>Stop</button>
+      <button onClick={start}>Start</button>
+      <button onClick={stop}>Stop</button>
 
       <h4>Live</h4>
       <p>{live}</p>
