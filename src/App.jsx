@@ -25,7 +25,7 @@ function App() {
 
   const languages = ["English", "Hindi", "Spanish"];
 
-  // dark mode 
+  // apply dark mode
   useEffect(() => {
     if (darkMode) {
       document.body.classList.add("dark-mode");
@@ -34,7 +34,7 @@ function App() {
     }
   }, [darkMode]);
 
-  // timer 
+  // Timer 
   useEffect(() => {
     if (status === "recording") {
       timerRef.current = setInterval(() => {
@@ -54,7 +54,7 @@ function App() {
     return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
 
-  // listen transcripts
+  // listen to transcripts
   useEffect(() => {
     let unlistenTranscript;
     let unlistenConnection;
@@ -171,13 +171,14 @@ function App() {
 
     await invoke("stop_deepgram");
 
+    // Move current text to editable text
     setEditableText(liveText + interimText);
     setIsEditing(true);
   };
 
   const finalizeText = () => {
     if (!editableText.trim()) {
-      setError("No speech detected. Try speaking louder.");
+      setError("ℹ️ No speech detected. Try speaking louder.");
       return;
     }
 
@@ -196,38 +197,60 @@ function App() {
   const copyToClipboard = async () => {
     try {
       await navigator.clipboard.writeText(finalText);
-      setConnectionStatus("Copied to clipboard!");
+      setConnectionStatus("✅ Copied to clipboard!");
       setTimeout(() => setConnectionStatus(""), 2000);
     } catch (err) {
       setError("Failed to copy to clipboard");
     }
   };
 
-  // download as text file
+  // download as text
   const downloadText = async () => {
     try {
+      const fileName = `transcript-${new Date().toISOString().slice(0, 10)}.txt`;
+
       const filePath = await save({
-        defaultPath: `transcript-${new Date().toISOString().slice(0, 10)}.txt`,
+        defaultPath: fileName,
         filters: [
           {
             name: "Text File",
             extensions: ["txt"],
           },
         ],
+        title: "Save Transcript As",
       });
 
       if (filePath) {
         await writeTextFile(filePath, finalText);
-        setConnectionStatus("File saved successfully!");
+
+        const savedPath = filePath.replace(/\\/g, '/');
+        setConnectionStatus(`✅ File saved to: ${savedPath}`);
+        setTimeout(() => setConnectionStatus(""), 5000);
+      } else {
+        setConnectionStatus("❌ Save cancelled");
         setTimeout(() => setConnectionStatus(""), 2000);
       }
     } catch (err) {
       console.error("Download error:", err);
-      setError("Failed to save file");
+
+      try {
+        const blob = new Blob([finalText], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `transcript-${new Date().toISOString().slice(0, 10)}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        setConnectionStatus("✅ File downloaded to your Downloads folder!");
+        setTimeout(() => setConnectionStatus(""), 3000);
+      } catch (fallbackErr) {
+        setError("Failed to save file: " + err.message);
+      }
     }
   };
 
-  // clear all
   const clearAll = () => {
     setFinalText("");
     setLiveText("");
@@ -281,7 +304,6 @@ function App() {
       </div>
 
       <div className="main-content">
-        {/* language & status */}
         <div className="row">
           <div className="row-item">
             <label className="label">Language</label>
@@ -315,7 +337,6 @@ function App() {
           </div>
         </div>
 
-        {/* hold to speak & connection status */}
         <div className="row">
           <div className="row-item">
             <button
@@ -340,7 +361,7 @@ function App() {
           </div>
         </div>
 
-        {/* error-status */}
+        {/* error/Status */}
         {error && <div className="message message-error">{error}</div>}
         {connectionStatus && !error && (
           <div className="message message-success">{connectionStatus}</div>
@@ -387,7 +408,7 @@ function App() {
           )}
         </div>
 
-        {/* final transcript */}
+        {/* final transcript  */}
         <div className="transcript-section">
           <div className="transcript-header">
             <span className="transcript-label">🟢 Final Transcript</span>
