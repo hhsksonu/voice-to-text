@@ -40,7 +40,7 @@ async fn start_deepgram(
 ) -> Result<(), String> {
     let key = env::var("DEEPGRAM_API_KEY").map_err(|_| "Missing DEEPGRAM_API_KEY")?;
 
-    // Map language codes
+    // map language 
     let lang_code = match params.language.as_str() {
         "English" => "en",
         "Hindi" => "hi",
@@ -54,7 +54,7 @@ async fn start_deepgram(
         lang_code
     );
 
-    // Connect to WebSocket with custom headers
+    // connect to webSocket with custom headers
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     
     let mut request = url.into_client_request()
@@ -65,7 +65,6 @@ async fn start_deepgram(
         format!("Token {}", key).parse().unwrap()
     );
 
-    // Connect to WebSocket
     let (ws_stream, _) = connect_async(request)
         .await
         .map_err(|e| {
@@ -82,13 +81,13 @@ async fn start_deepgram(
     *state.sender.lock().await = Some(tx);
     *state.connection_active.lock().await = true;
 
-    // Emit connection success
+    // emit connection
     let _ = app.emit("connection-status", ConnectionEvent {
         status: "connected".to_string(),
         message: "Connected to Deepgram".to_string(),
     });
 
-    // 🔊 Audio sender task
+    // audio sender
     let connection_active = state.connection_active.clone();
     let app_handle_sender = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -104,7 +103,7 @@ async fn start_deepgram(
         }
     });
 
-    // 🧠 Transcript receiver task
+    // transcript receiver
     let app_handle = app.clone();
     let connection_active = state.connection_active.clone();
     tauri::async_runtime::spawn(async move {
@@ -173,7 +172,6 @@ async fn check_connection(state: State<'_, DeepgramState>) -> Result<bool, Strin
 }
 
 fn main() {
-    // Load .env file (looks in src-tauri directory and parent directories)
     dotenvy::dotenv().ok();
     
     tauri::Builder::default()

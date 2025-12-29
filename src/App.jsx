@@ -13,6 +13,7 @@ function App() {
 
   const [interimText, setInterimText] = useState("");
   const [liveText, setLiveText] = useState("");
+  const [editableText, setEditableText] = useState("");
   const [finalText, setFinalText] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [status, setStatus] = useState("idle");
@@ -22,9 +23,9 @@ function App() {
   const [error, setError] = useState("");
   const [connectionStatus, setConnectionStatus] = useState("");
 
-  const languages = ["English", "Hindi", "Kannada", "Spanish"];
+  const languages = ["English", "Hindi", "Spanish"];
 
-  // Apply dark mode to body
+  // dark mode 
   useEffect(() => {
     if (darkMode) {
       document.body.classList.add("dark-mode");
@@ -33,7 +34,7 @@ function App() {
     }
   }, [darkMode]);
 
-  // Timer logic
+  // timer 
   useEffect(() => {
     if (status === "recording") {
       timerRef.current = setInterval(() => {
@@ -47,14 +48,13 @@ function App() {
     };
   }, [status]);
 
-  // Format timer
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
 
-  // Listen to Deepgram transcripts
+  // listen transcripts
   useEffect(() => {
     let unlistenTranscript;
     let unlistenConnection;
@@ -69,10 +69,8 @@ function App() {
           if (is_final) {
             const trimmedText = text.trim();
 
-            // Check if we've already processed this exact final text
             if (!previousFinalTexts.has(trimmedText)) {
               setLiveText((prev) => {
-                // Also check if this text is already at the end of previous text
                 const currentText = prev.trim();
                 if (!currentText.endsWith(trimmedText)) {
                   previousFinalTexts.add(trimmedText);
@@ -83,7 +81,6 @@ function App() {
             }
             setInterimText("");
           } else {
-            // Replace interim text, don't append
             setInterimText(text);
           }
         }
@@ -106,7 +103,7 @@ function App() {
     };
   }, []);
 
-  // Start recording
+  // start recording
   const startRecording = async () => {
     if (isRecordingRef.current) return;
 
@@ -159,7 +156,7 @@ function App() {
     }
   };
 
-  // Stop recording
+  // stop recording
   const stopRecording = async () => {
     if (!isRecordingRef.current) return;
 
@@ -173,20 +170,22 @@ function App() {
     streamRef.current = null;
 
     await invoke("stop_deepgram");
+
+    setEditableText(liveText + interimText);
     setIsEditing(true);
   };
 
-  // Finalize text
   const finalizeText = () => {
-    if (!liveText.trim() && !interimText.trim()) {
-      setError("ℹ️ No speech detected. Try speaking louder.");
+    if (!editableText.trim()) {
+      setError("No speech detected. Try speaking louder.");
       return;
     }
 
-    const fullText = (liveText + interimText).trim();
+    const fullText = editableText.trim();
     setFinalText((prev) => (prev ? prev + "\n\n" + fullText : fullText));
     setLiveText("");
     setInterimText("");
+    setEditableText("");
     setIsEditing(false);
     setStatus("idle");
     setTimer(0);
@@ -197,14 +196,14 @@ function App() {
   const copyToClipboard = async () => {
     try {
       await navigator.clipboard.writeText(finalText);
-      setConnectionStatus("✅ Copied to clipboard!");
+      setConnectionStatus("Copied to clipboard!");
       setTimeout(() => setConnectionStatus(""), 2000);
     } catch (err) {
       setError("Failed to copy to clipboard");
     }
   };
 
-  // Download as text file
+  // download as text file
   const downloadText = async () => {
     try {
       const filePath = await save({
@@ -219,7 +218,7 @@ function App() {
 
       if (filePath) {
         await writeTextFile(filePath, finalText);
-        setConnectionStatus("✅ File saved successfully!");
+        setConnectionStatus("File saved successfully!");
         setTimeout(() => setConnectionStatus(""), 2000);
       }
     } catch (err) {
@@ -228,11 +227,12 @@ function App() {
     }
   };
 
-  // Clear all
+  // clear all
   const clearAll = () => {
     setFinalText("");
     setLiveText("");
     setInterimText("");
+    setEditableText("");
     setTimer(0);
     setStatus("idle");
     setError("");
@@ -263,7 +263,6 @@ function App() {
 
   return (
     <div className="app-container">
-      {/* Header */}
       <div className="header">
         <div style={{ width: "60px" }}></div>
         <div className="header-content">
@@ -281,9 +280,8 @@ function App() {
         </button>
       </div>
 
-      {/* Main Content */}
       <div className="main-content">
-        {/* Row 1: Language & Status */}
+        {/* language & status */}
         <div className="row">
           <div className="row-item">
             <label className="label">Language</label>
@@ -317,7 +315,7 @@ function App() {
           </div>
         </div>
 
-        {/* Row 2: Hold to Speak & Connection Status */}
+        {/* hold to speak & connection status */}
         <div className="row">
           <div className="row-item">
             <button
@@ -342,13 +340,13 @@ function App() {
           </div>
         </div>
 
-        {/* Error/Status Messages */}
+        {/* error-status */}
         {error && <div className="message message-error">{error}</div>}
         {connectionStatus && !error && (
           <div className="message message-success">{connectionStatus}</div>
         )}
 
-        {/* Live Transcript Section */}
+        {/* live transcript */}
         <div className="transcript-section">
           <div className="transcript-header">
             <span className="transcript-label">🟡 Live Transcript</span>
@@ -368,8 +366,8 @@ function App() {
           {isEditing ? (
             <textarea
               className="transcript-box"
-              value={liveText + interimText}
-              onChange={(e) => setLiveText(e.target.value)}
+              value={editableText}
+              onChange={(e) => setEditableText(e.target.value)}
               placeholder="Your transcription will appear here..."
             />
           ) : (
@@ -389,7 +387,7 @@ function App() {
           )}
         </div>
 
-        {/* Final Transcript Section */}
+        {/* final transcript */}
         <div className="transcript-section">
           <div className="transcript-header">
             <span className="transcript-label">🟢 Final Transcript</span>
