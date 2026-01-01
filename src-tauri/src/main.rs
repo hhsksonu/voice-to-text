@@ -40,11 +40,10 @@ async fn start_deepgram(
 ) -> Result<(), String> {
     let key = env::var("DEEPGRAM_API_KEY").map_err(|_| "Missing DEEPGRAM_API_KEY")?;
 
-    // map language 
+    // map language
     let lang_code = match params.language.as_str() {
         "English" => "en",
         "Hindi" => "hi",
-        "Kannada" => "kn",
         "Spanish" => "es",
         _ => "en",
     };
@@ -68,11 +67,20 @@ async fn start_deepgram(
     let (ws_stream, _) = connect_async(request)
         .await
         .map_err(|e| {
+            let error_msg = if e.to_string().contains("No such host") || 
+                              e.to_string().contains("11001") {
+                "No internet connection. Please check your network.".to_string()
+            } else if e.to_string().contains("connect") {
+                "Failed to connect to Deepgram. Check your internet connection.".to_string()
+            } else {
+                format!("Connection error: {}", e)
+            };
+            
             let _ = app.emit("connection-status", ConnectionEvent {
                 status: "error".to_string(),
-                message: format!("Connection failed: {}", e),
+                message: error_msg.clone(),
             });
-            format!("WebSocket connection failed: {}", e)
+            error_msg
         })?;
 
     let (mut write, mut read) = ws_stream.split();
@@ -87,7 +95,7 @@ async fn start_deepgram(
         message: "Connected to Deepgram".to_string(),
     });
 
-    // audio sender
+    // audio sender 
     let connection_active = state.connection_active.clone();
     let app_handle_sender = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -173,7 +181,6 @@ async fn check_connection(state: State<'_, DeepgramState>) -> Result<bool, Strin
 
 fn main() {
     dotenvy::dotenv().ok();
-    
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())

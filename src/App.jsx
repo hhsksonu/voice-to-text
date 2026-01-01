@@ -25,7 +25,7 @@ function App() {
 
   const languages = ["English", "Hindi", "Spanish"];
 
-  // apply dark mode
+  // dark mode
   useEffect(() => {
     if (darkMode) {
       document.body.classList.add("dark-mode");
@@ -54,7 +54,7 @@ function App() {
     return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
 
-  // listen to transcripts
+  //deepgram transcripts
   useEffect(() => {
     let unlistenTranscript;
     let unlistenConnection;
@@ -116,8 +116,6 @@ function App() {
       setIsEditing(false);
       setInterimText("");
 
-      await invoke("start_deepgram", { params: { language } });
-
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -127,11 +125,32 @@ function App() {
       });
 
       streamRef.current = stream;
+
+      await invoke("start_deepgram", { params: { language } });
+
       setStatus("recording");
 
-      const recorder = new MediaRecorder(stream, {
-        mimeType: "audio/webm;codecs=opus",
-      });
+      let mimeType = "";
+      const codecs = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg;codecs=opus",
+        "audio/mp4",
+        "audio/wav",
+      ];
+
+      for (const codec of codecs) {
+        if (MediaRecorder.isTypeSupported(codec)) {
+          mimeType = codec;
+          break;
+        }
+      }
+
+      if (!mimeType) {
+        throw new Error("No supported audio format found");
+      }
+
+      const recorder = new MediaRecorder(stream, { mimeType });
 
       recorderRef.current = recorder;
 
@@ -149,14 +168,34 @@ function App() {
 
       recorder.start(150);
     } catch (err) {
-      console.error(err);
-      setError("❌ Microphone access denied. Please allow permissions.");
-      setStatus("error");
+      console.error("Error:", err);
       isRecordingRef.current = false;
+
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+
+      if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+        setError("❌ Microphone access denied. Please allow permissions.");
+      }
+      else if (err.name === "NotSupportedError" || err.message.includes("MediaRecorder")) {
+        setError("⚠️ Your browser doesn't support audio recording. Please use Chrome, Edge, or Firefox.");
+      }
+      else if (err.toString().includes("Connection failed") ||
+        err.toString().includes("No such host") ||
+        err.toString().includes("network")) {
+        setError("🌐 No internet connection. Please check your network.");
+      }
+      else {
+        setError(`⚠️ Error: ${err.message || "Failed to start recording"}`);
+      }
+
+      setStatus("error");
     }
   };
 
-  // stop recording
+  //stop recording
   const stopRecording = async () => {
     if (!isRecordingRef.current) return;
 
@@ -171,11 +210,11 @@ function App() {
 
     await invoke("stop_deepgram");
 
-    // Move current text to editable text
     setEditableText(liveText + interimText);
     setIsEditing(true);
   };
 
+  // finalize text
   const finalizeText = () => {
     if (!editableText.trim()) {
       setError("ℹ️ No speech detected. Try speaking louder.");
@@ -204,7 +243,7 @@ function App() {
     }
   };
 
-  // download as text
+  //download as text file
   const downloadText = async () => {
     try {
       const fileName = `transcript-${new Date().toISOString().slice(0, 10)}.txt`;
@@ -251,6 +290,7 @@ function App() {
     }
   };
 
+  // Clear all
   const clearAll = () => {
     setFinalText("");
     setLiveText("");
@@ -286,6 +326,7 @@ function App() {
 
   return (
     <div className="app-container">
+      {/* Header */}
       <div className="header">
         <div style={{ width: "60px" }}></div>
         <div className="header-content">
@@ -361,7 +402,7 @@ function App() {
           </div>
         </div>
 
-        {/* error/Status */}
+        {/* Error/Status */}
         {error && <div className="message message-error">{error}</div>}
         {connectionStatus && !error && (
           <div className="message message-success">{connectionStatus}</div>
@@ -408,7 +449,7 @@ function App() {
           )}
         </div>
 
-        {/* final transcript  */}
+        {/* final Transcript */}
         <div className="transcript-section">
           <div className="transcript-header">
             <span className="transcript-label">🟢 Final Transcript</span>
