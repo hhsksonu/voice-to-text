@@ -40,10 +40,11 @@ async fn start_deepgram(
 ) -> Result<(), String> {
     let key = env::var("DEEPGRAM_API_KEY").map_err(|_| "Missing DEEPGRAM_API_KEY")?;
 
-    // map language
+    // map language c
     let lang_code = match params.language.as_str() {
         "English" => "en",
         "Hindi" => "hi",
+        "Kannada" => "en", // Deepgram doesn't support Kannada directly, fallback to English
         "Spanish" => "es",
         _ => "en",
     };
@@ -53,7 +54,7 @@ async fn start_deepgram(
         lang_code
     );
 
-    // connect to webSocket with custom headers
+    // connection to WebSocket 
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     
     let mut request = url.into_client_request()
@@ -89,13 +90,13 @@ async fn start_deepgram(
     *state.sender.lock().await = Some(tx);
     *state.connection_active.lock().await = true;
 
-    // emit connection
+    // connection success
     let _ = app.emit("connection-status", ConnectionEvent {
         status: "connected".to_string(),
         message: "Connected to Deepgram".to_string(),
     });
 
-    // audio sender 
+    // Audio sender
     let connection_active = state.connection_active.clone();
     let app_handle_sender = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -111,7 +112,7 @@ async fn start_deepgram(
         }
     });
 
-    // transcript receiver
+    // transcript receiver 
     let app_handle = app.clone();
     let connection_active = state.connection_active.clone();
     tauri::async_runtime::spawn(async move {
@@ -180,7 +181,15 @@ async fn check_connection(state: State<'_, DeepgramState>) -> Result<bool, Strin
 }
 
 fn main() {
-    dotenvy::dotenv().ok();
+    if dotenvy::dotenv().is_err() {
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let env_path = exe_dir.join(".env");
+                let _ = dotenvy::from_path(env_path);
+            }
+        }
+    }
+    
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
