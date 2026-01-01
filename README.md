@@ -358,7 +358,7 @@ export DEEPGRAM_API_KEY="your_actual_api_key"
 ### Step 3: Build
 
 ```bash
-npm run tauri build
+npx tauri build
 ```
 
 ### Build Output
